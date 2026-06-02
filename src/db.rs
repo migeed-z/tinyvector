@@ -272,6 +272,27 @@ mod tests {
 	}
 
 	#[test]
+	fn test_cosine_ranking_correct_order() {
+		let mut db = Db::new();
+		db.create_collection("test".to_string(), 2, Distance::Cosine).unwrap();
+		db.insert_into_collection("test", Embedding {
+			id: "aligned".to_string(),
+			vector: vec![1.0, 0.0],
+			metadata: None,
+		}).unwrap();
+		db.insert_into_collection("test", Embedding {
+			id: "diagonal".to_string(),
+			vector: vec![1.0, 1.0],
+			metadata: None,
+		}).unwrap();
+		let results = db.get_collection("test").unwrap()
+			.get_similarity(&[1.0, 0.0], 2);
+		assert_eq!(results[0].embedding.id, "aligned",
+			"Perfectly aligned vector should rank first for cosine, got '{}'",
+			results[0].embedding.id);
+	}
+
+	#[test]
 	fn test_dot_product_not_affected() {
 		let mut db = Db::new();
 		db.create_collection("test".to_string(), 2, Distance::DotProduct).unwrap();

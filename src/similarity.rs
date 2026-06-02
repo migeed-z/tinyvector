@@ -23,9 +23,8 @@ pub fn get_cache_attr(metric: Distance, vec: &[f32]) -> f32 {
 
 pub fn get_distance_fn(metric: Distance) -> impl Fn(&[f32], &[f32], f32) -> f32 {
 	match metric {
-		Distance::Euclidean => euclidian_distance,
-		// We use dot product for cosine because we've normalized the vectors on insertion
-		Distance::Cosine | Distance::DotProduct => dot_product,
+		Distance::Euclidean | Distance::Cosine => euclidian_distance,
+		Distance::DotProduct => dot_product,
 	}
 }
 
