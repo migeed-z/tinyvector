@@ -56,7 +56,12 @@ pub struct Collection {
 
 impl Collection {
 	pub fn get_similarity(&self, query: &[f32], k: usize) -> Vec<SimilarityResult> {
-		let memo_attr = get_cache_attr(self.distance, query);
+		let query_vec = if self.distance == Distance::Cosine {
+			normalize(query)
+		} else {
+			query.to_vec()
+		};
+		let memo_attr = get_cache_attr(self.distance, &query_vec);
 		let distance_fn = get_distance_fn(self.distance);
 
 		let scores = self
@@ -64,7 +69,7 @@ impl Collection {
 			.par_iter()
 			.enumerate()
 			.map(|(index, embedding)| {
-				let score = distance_fn(&embedding.vector, query, memo_attr);
+				let score = distance_fn(&embedding.vector, &query_vec, memo_attr);
 				ScoreIndex { score, index }
 			})
 			.collect::<Vec<_>>();
@@ -202,4 +207,86 @@ impl Drop for Db {
 
 pub fn from_store() -> anyhow::Result<Db> {
 	Db::load_from_store()
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::similarity::Distance;
+
+	#[test]
+	fn test_cosine_query_scores_reflect_magnitude() {
+		let mut db = Db::new();
+		db.create_collection("test".to_string(), 3, Distance::Cosine).unwrap();
+
+		// Insert a unit-ish vector
+		db.insert_into_collection("test", Embedding {
+			id: "a".to_string(),
+			vector: vec![1.0, 0.0, 0.0],
+			metadata: None,
+		}).unwrap();
+
+		// Query with a vector that has magnitude > 1
+		// Since stored vectors are normalized on insert, the score should
+		// reflect the query's magnitude (dot product of normalized_stored * raw_query)
+		let results = db.get_collection("test").unwrap()
+			.get_similarity(&[3.0, 0.0, 0.0], 1);
+
+		// dot([1,0,0], [3,0,0]) = 3.0 (stored is already normalized to [1,0,0])
+		// If query is incorrectly re-normalized, score would be 1.0 instead of 3.0
+		assert!(results[0].score > 1.5,
+			"Score should reflect query magnitude (expected ~3.0), got {}",
+			results[0].score);
+	}
+
+	#[test]
+	fn test_cosine_ranking_preserves_query_scale() {
+		let mut db = Db::new();
+		db.create_collection("test".to_string(), 2, Distance::Cosine).unwrap();
+
+		db.insert_into_collection("test", Embedding {
+			id: "aligned".to_string(),
+			vector: vec![1.0, 0.0],
+			metadata: None,
+		}).unwrap();
+		db.insert_into_collection("test", Embedding {
+			id: "diagonal".to_string(),
+			vector: vec![1.0, 1.0],
+			metadata: None,
+		}).unwrap();
+
+		// Query with a scaled vector - ranking should be same regardless of scale
+		let results_small = db.get_collection("test").unwrap()
+			.get_similarity(&[1.0, 0.0], 2);
+		let results_large = db.get_collection("test").unwrap()
+			.get_similarity(&[100.0, 0.0], 2);
+
+		// Both queries point in the same direction, so ranking should be identical
+		assert_eq!(results_small[0].embedding.id, results_large[0].embedding.id,
+			"Ranking should be scale-invariant for cosine");
+
+		// But scores should differ by the scale factor
+		let ratio = results_large[0].score / results_small[0].score;
+		assert!(ratio > 50.0,
+			"Score ratio should reflect query scale (~100x), got {:.1}x", ratio);
+	}
+
+	#[test]
+	fn test_dot_product_not_affected() {
+		let mut db = Db::new();
+		db.create_collection("test".to_string(), 2, Distance::DotProduct).unwrap();
+
+		db.insert_into_collection("test", Embedding {
+			id: "a".to_string(),
+			vector: vec![2.0, 3.0],
+			metadata: None,
+		}).unwrap();
+
+		let results = db.get_collection("test").unwrap()
+			.get_similarity(&[1.0, 1.0], 1);
+
+		// dot([2,3], [1,1]) = 5.0 (no normalization for dot product)
+		assert!((results[0].score - 5.0).abs() < 0.01,
+			"DotProduct score should be 5.0, got {}", results[0].score);
+	}
 }
