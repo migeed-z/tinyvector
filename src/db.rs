@@ -162,7 +162,6 @@ impl Db {
 			return Err(Error::DimensionMismatch);
 		}
 
-		// Normalize the vector if the distance metric is cosine, so we can use dot product later
 		if collection.distance == Distance::Cosine {
 			embedding.vector = normalize(&embedding.vector);
 		}
@@ -219,21 +218,15 @@ mod tests {
 		let mut db = Db::new();
 		db.create_collection("test".to_string(), 3, Distance::Cosine).unwrap();
 
-		// Insert a unit-ish vector
 		db.insert_into_collection("test", Embedding {
 			id: "a".to_string(),
 			vector: vec![1.0, 0.0, 0.0],
 			metadata: None,
 		}).unwrap();
 
-		// Query with a vector that has magnitude > 1
-		// Since stored vectors are normalized on insert, the score should
-		// reflect the query's magnitude (dot product of normalized_stored * raw_query)
 		let results = db.get_collection("test").unwrap()
 			.get_similarity(&[3.0, 0.0, 0.0], 1);
 
-		// dot([1,0,0], [3,0,0]) = 3.0 (stored is already normalized to [1,0,0])
-		// If query is incorrectly re-normalized, score would be 1.0 instead of 3.0
 		assert!(results[0].score > 1.5,
 			"Score should reflect query magnitude (expected ~3.0), got {}",
 			results[0].score);
@@ -306,7 +299,6 @@ mod tests {
 		let results = db.get_collection("test").unwrap()
 			.get_similarity(&[1.0, 1.0], 1);
 
-		// dot([2,3], [1,1]) = 5.0 (no normalization for dot product)
 		assert!((results[0].score - 5.0).abs() < 0.01,
 			"DotProduct score should be 5.0, got {}", results[0].score);
 	}
